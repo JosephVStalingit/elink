@@ -27,50 +27,86 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Joins a signalling room and keeps one {@link PeerSession} per peer found there.
+ * 一个"房间"里的会话：加入 MQTT 房间，并为房间里的每个对端维护一条 {@link PeerSession}。
  *
- * <p>The session is transport agnostic: it knows nothing about Minecraft, worlds or packets. It
- * hands out a reliable byte channel per peer and reports peers appearing and disappearing, which is
- * what the Minecraft integration will build on.
+ * <p>这个类是整个模组的**大脑**，也是最值得先读的类。它做四件事：
  *
- * <p>Negotiation roles are decided by comparing installation ids: the peer with the lower id
- * initiates, the other one answers. That is deterministic and needs no extra round trip, which keeps
- * the room free of two simultaneous offers.
+ * <ol>
+ *   <li><b>收发信令</b>：通过 {@link SignallingClient} 订阅房间主题，把收到的 JSON 变成
+ *       {@link SignalMessage} 再分派给对应的处理方法；发出的每条消息都会自动带上房间密钥的证明。
+ *   <li><b>决定谁先发起</b>：比较双方的安装 ID，字典序小的一方发 offer，另一方等。这样不会出现
+ *       "双方同时发 offer"而互相打断。
+ *   <li><b>账号证明状态机</b>：当房主设置了好友名单时，房主发 {@code challenge}，对方用令牌向账号服务
+ *       证明后回 {@code challenge_response}，房主核实通过才发 {@code verified}；在此之前双方**不协商**。
+ *   <li><b>把数据交给隧道</b>：对端发来的数据原样转给 {@link Listener#onPeerData}，由隧道去解析帧。
+ * </ol>
+ *
+ * <p>线程：本类的回调来自 Paho 的 MQTT 线程（收消息）和 WebRTC 的原生线程（数据到达），
+ * 因此内部共享状态都用并发容器或 {@code volatile}；回调里不做耗时操作，账号验证等慢活交给
+ * {@code IdentityService} 的后台线程。
  */
 public final class P2PSession implements AutoCloseable, SignallingClient.Listener {
     private static final Logger LOGGER = LoggerFactory.getLogger("mcp2p/session");
 
-    /** Events of the session, fired on WebRTC or Paho threads. */
+    /**
+     * 会话事件回调。实现方（隧道）只应做轻量处理，不要阻塞。
+     *
+     * <p>这些回调可能在 WebRTC 或 MQTT 线程上被调用，**不是游戏主线程**。
+     */
     public interface Listener {
-        /** The data channel of a peer became usable. */
+        /** 某个对端的数据通道已经可用，可以开始传数据了。 */
         void onPeerReady(String peerId, String peerName);
 
-        /** A peer left or its connection broke down. */
+        /** 某个对端离开或连接断开。 */
         void onPeerGone(String peerId, String reason);
 
-        /** Data arrived from a peer; the buffer is a detached copy. */
+        /** 收到某个对端的数据。{@code data} 是一份复制品，可以放心保存或跨线程使用。 */
         void onPeerData(String peerId, ByteBuffer data, boolean binary);
 
-        /** A human readable status update, meant for logs or the player. */
+        /** 一句给人看的进度信息，通常写进日志或聊天栏。 */
         void onStatus(String status);
     }
 
+    /** 配置（房间码、好友名单、端口等都从这里读）。 */
     private final McP2pConfig config;
+
+    /** 本安装的 ID，同时用作 MQTT 客户端 ID 的一部分，用来区分对端。 */
     private final String installId;
+
+    /** 其他对端看到的名字（有账号时用账号名，否则退回系统用户名）。 */
     private final String displayName;
+
+    /** 上层（隧道）的回调。 */
     private final Listener listener;
+
+    /** 账号服务：发挑战、应答挑战、核实对方的账号。 */
     private final IdentityService identity;
+
+    /** WebRTC 引擎：按需创建原生工厂，进程内共享一份。 */
     private final WebRtcEngine engine = new WebRtcEngine();
+
+    /** 对端 ID → 该对端的 WebRTC 会话。并发 Map，因为会在 MQTT 线程与 WebRTC 线程上读写。 */
     private final Map<String, PeerSession> peers = new ConcurrentHashMap<>();
+
+    /** 对端 ID → 显示名，用于日志和聊天栏提示。 */
     private final Map<String, String> peerNames = new ConcurrentHashMap<>();
+
+    /** 哪些对端在 hello 里声明了"我这边有世界可以进"。加入方会优先挑这样的对端。 */
     private final Set<String> hostingPeers = ConcurrentHashMap.newKeySet();
-    /** Peers whose account proof was accepted; a room without an allow list trusts everybody. */
+
+    /** 哪些对端已经通过账号证明。没有设置好友名单时这个集合不起作用（全部视为可信）。 */
     private final Set<String> verifiedPeers = ConcurrentHashMap.newKeySet();
-    /** The random challenge ids handed out to peers. */
+
+    /** 对端 ID → 我们发给它的随机挑战串，用于核对它回执的是不是同一个挑战。 */
     private final Map<String, String> challenges = new ConcurrentHashMap<>();
 
+    /** MQTT 客户端；{@link #leave()} 之后置为 null。 */
     private SignallingClient signalling;
+
+    /** 是否已经加入过房间（防止重复 join）。 */
     private volatile boolean joined;
+
+    /** 本端是否声明"我在托管世界"；会随 hello 一起发出去。 */
     private volatile boolean hosting;
 
     public P2PSession(
@@ -238,12 +274,21 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
                         + (cause == null ? "unknown reason" : cause.getMessage()));
     }
 
+    /**
+     * 收到一条信令消息（可能来自房间里的任何人）。
+     *
+     * <p>这里是一道"过滤器 + 分派器"：先排除掉不该处理的（自己发的、版本不符、不是给我的、没有房间密钥
+     * 证明的、房间不对的），再按类型交给对应的 handle 方法。
+     *
+     * <p>线程：这个方法运行在 Paho 的 MQTT 线程上，所以里面的处理都要么很快，要么丢给后台线程。
+     */
     @Override
     public void onMessage(final SignalMessage message) {
+        // MQTT 会把消息回送给发布者自己，所以先丢掉"我发的"
         if (message.from.equals(installId)) {
-            // Our own message, echoed back by the broker.
             return;
         }
+        // 版本不同说明对方是另一个（未来或更旧的）协议版本，听不懂就别乱猜
         if (message.version != SignalMessage.VERSION) {
             LOGGER.warn(
                     "Ignoring {}: it speaks signalling protocol version {}",
@@ -251,9 +296,11 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
                     message.version);
             return;
         }
+        // 消息里可能带 to；只处理"发给我的"或"广播"的
         if (!message.isFor(installId)) {
             return;
         }
+        // 房间密钥证明：没有它就不该继续，连 WebRTC 对象都不创建
         if (!accepts(message)) {
             LOGGER.warn(
                     "Ignoring a {} from {}: it does not prove that it knows the room secret",
@@ -261,6 +308,7 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
                     message.from);
             return;
         }
+        // 房间码也要对得上（同一主题下可能混进别的房间的重放消息）
         if (message.room != null && !message.room.equals(config.getRoomCode())) {
             LOGGER.debug("Ignoring a message that belongs to room {}", message.room);
             return;
