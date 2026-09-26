@@ -1,0 +1,28 @@
+modLoader = "javafml"
+loaderVersion = "*"
+license = "MIT"
+
+[[mods]]
+modId = "${id}"
+version = "${version}"
+displayName = "${name}"
+authors = "JosephVStalin"
+description = '''
+${description}
+'''
+
+__STONECRAFT_#FORGE__
+[[dependencies.${id}]]
+modId = "forge"
+mandatory = true
+versionRange = "[${forgeLoaderVersion},)"
+ordering = "NONE"
+side = "BOTH"
+__STONECRAFT_/FORGE__
+
+[[dependencies.${id}]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[${minecraftVersionVirtual},)"
+ordering = "NONE"
+side = "BOTH"

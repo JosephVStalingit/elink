@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "${id}",
+  "version": "${version}",
+
+  "name": "${name}",
+  "description": "${description}",
+  "authors": ["JosephVStalin"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["${group}.${id}.McP2p"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.14",
+    "fabric-api": ">=${fabricVersion}",
+    "minecraft": ">=${minecraftVersion}"
+  }
+}
