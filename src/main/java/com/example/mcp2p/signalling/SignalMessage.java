@@ -33,7 +33,17 @@ public final class SignalMessage {
         /** The peer answers a challenge after proving itself to the account service. */
         CHALLENGE_RESPONSE,
         /** The host confirms that a peer's proof was accepted. */
-        VERIFIED
+        VERIFIED,
+        /**
+         * Sender publishes a batch of "STUN 反射出的公网端口"样本，让对方据此预测要扫描的端口区间
+         * （对称 NAT 下要靠这个推测对方可能使用的端口）。
+         */
+        STUN_SAMPLES,
+        /**
+         * 双方打洞命中后，互相告知"我自己用来通信的本地端口"，让对端把发送目标改成它——避免生日
+         * 悖论扫描两端命中不同本地端口时，A 发到 B 的旧端口而 B 在新端口上收不到的问题。
+         */
+        PUNCH_PORT
     }
 
     private static final Gson GSON = new Gson();
@@ -91,6 +101,21 @@ public final class SignalMessage {
     /** The random id of a {@link Type#CHALLENGE} handshake, echoed back in the response. */
     public String challenge;
 
+    /**
+     * {@link Type#STUN_SAMPLES}：本机经过若干 STUN 服务器反射得到的公网端口列表，用来让对方推断
+     * 我们接下来可能要使用的端口区间（对称 NAT 下，端口是按某种规律递增的）。
+     */
+    public int[] stunSamples;
+
+    /**
+     * {@link Type#PUNCH_PORT}：本机打洞命中后，用于承载 Minecraft 流量的本地 UDP 端口。
+     * 对端收到后把发送目标改成这个端口，从而保证两端在同一对 socket 上收发。
+     */
+    public Integer punchPort;
+
+    /** 对端的公网 IP（用 MQTT 信令递过去的字符串形式），打洞的目标地址就是它。 */
+    public String punchAddress;
+
     /** Creates an empty message of the given type, ready to be filled in and published. */
     public static SignalMessage of(
             final Type type, final String room, final String from, final String fromName) {
@@ -141,6 +166,12 @@ public final class SignalMessage {
         }
         if (sdpMid != null) {
             builder.append(" candidate=").append(sdpMid).append('#').append(sdpMLineIndex);
+        }
+        if (stunSamples != null) {
+            builder.append(" stunSamples=").append(stunSamples.length);
+        }
+        if (punchPort != null) {
+            builder.append(" punchPort=").append(punchPort);
         }
         return builder.append(']').toString();
     }

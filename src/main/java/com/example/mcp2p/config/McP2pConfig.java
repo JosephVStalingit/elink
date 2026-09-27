@@ -31,7 +31,18 @@ public final class McP2pConfig {
     public static final String DEFAULT_BROKER_URI = "tcp://broker.emqx.io:1883";
 
     public static final String DEFAULT_TOPIC_PREFIX = "mcp2p";
-    public static final String DEFAULT_STUN_SERVERS = "stun:stun.l.google.com:19302";
+    public static final String DEFAULT_STUN_SERVERS =
+            // 地理分布广 + 公共稳定 + 协议端口 3478；多填几个是为了让对称 NAT 下的"端口分配规律推断"更准。
+            // 用户可以覆盖整个列表（在配置里把 stun-servers 留空 = 一个也不用）。
+            "stun:stun.l.google.com:19302,"
+                    + "stun:stun.cloudflare.com:3478,"
+                    + "stun:stun.nextcloud.com:3478,"
+                    + "stun:stun.miwifi.com:3478,"
+                    + "stun:stun.chat.bilibili.com:3478,"
+                    + "stun:stun1.l.google.com:19302,"
+                    + "stun:stun2.l.google.com:19302,"
+                    + "stun:stun3.l.google.com:19302,"
+                    + "stun:stun4.l.google.com:19302";
     public static final String DEFAULT_DATA_CHANNEL_LABEL = "mcp2p";
 
     /**

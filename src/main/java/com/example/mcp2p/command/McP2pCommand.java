@@ -69,7 +69,7 @@ public final class McP2pCommand {
                         .then(
                                 Commands.literal("login")
                                         .then(
-                                                Commands.argument("name", StringArgumentType.word())
+                                                Commands.argument("name", StringArgumentType.string())
                                                         .then(
                                                                 Commands.argument(
                                                                                 "password",

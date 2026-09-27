@@ -3,6 +3,8 @@ package com.example.mcp2p.net;
 import com.example.mcp2p.config.McP2pConfig;
 import com.example.mcp2p.identity.IdentityService;
 import com.example.mcp2p.identity.PlayerIdentity;
+import com.example.mcp2p.punch.PunchCoordinator;
+import com.example.mcp2p.punch.UdpLink;
 import com.example.mcp2p.rtc.PeerSession;
 import com.example.mcp2p.rtc.WebRtcEngine;
 import com.example.mcp2p.signalling.SignalMessage;
@@ -16,6 +18,7 @@ import dev.onvoid.webrtc.RTCIceTransportPolicy;
 import dev.onvoid.webrtc.RTCPeerConnectionState;
 import dev.onvoid.webrtc.RTCSdpType;
 import dev.onvoid.webrtc.RTCSessionDescription;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -105,6 +108,9 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
     /** MQTT 客户端；{@link #leave()} 之后置为 null。 */
     private SignallingClient signalling;
 
+    /** UDP 打洞协调器；在 {@link #join()} 时构造，命中后用于替代/并联 WebRTC 通道承载隧道流量。 */
+    private PunchCoordinator punchCoordinator;
+
     /** 是否已经加入过房间（防止重复 join）。 */
     private volatile boolean joined;
 
@@ -132,6 +138,7 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
         joined = true;
         signalling = new SignallingClient(config, installId, this);
         signalling.connect();
+        punchCoordinator = createPunchCoordinator();
     }
 
     /** Says goodbye, closes every peer connection and disconnects. */
@@ -150,6 +157,10 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
         signalling = null;
         if (client != null) {
             client.close();
+        }
+        if (punchCoordinator != null) {
+            punchCoordinator.close();
+            punchCoordinator = null;
         }
         engine.close();
     }
@@ -173,6 +184,16 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
 
     /** Sends data to one peer. */
     public boolean send(final String peerId, final ByteBuffer data, final boolean binary) {
+        // 优先走打洞通道（无加密开销、延迟最低）；WebRTC 作为兜底
+        final UdpLink link = punchCoordinator == null
+                ? null
+                : punchCoordinator.readyLinks().get(peerId);
+        if (link != null) {
+            final byte[] bytes = new byte[data.remaining()];
+            data.duplicate().get(bytes);
+            link.send(bytes);
+            return true;
+        }
         final PeerSession session = peers.get(peerId);
         if (session == null) {
             return false;
@@ -393,6 +414,16 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
             case VERIFIED:
                 handleVerified(message);
                 break;
+            case STUN_SAMPLES:
+                if (punchCoordinator != null) {
+                    punchCoordinator.learnRemoteSamples(message.from, message.stunSamples, message.punchAddress);
+                }
+                break;
+            case PUNCH_PORT:
+                if (punchCoordinator != null && message.punchPort != null) {
+                    punchCoordinator.onPunchPort(message.from, message.punchPort);
+                }
+                break;
         }
     }
 
@@ -433,8 +464,92 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
 
     /** Picks the initiating side: the lower installation id wins, so no two offers are sent. */
     private void onPeerReadyToNegotiate(final String peerId) {
+        // 同时启动 UDP 打洞——与 WebRTC 协商并行；只要任一通道建好，隧道就可以走它
+        if (punchCoordinator != null) {
+            attachPunchListener(peerId);
+            punchCoordinator.startWith(peerId);
+        }
         if (installId.compareTo(peerId) < 0) {
             initiate(peerId);
+        }
+    }
+
+    /** 构造 {@link PunchCoordinator}，把 STUN 服务器列表、房间密钥 token、信令出口等准备好。 */
+    private PunchCoordinator createPunchCoordinator() {
+        final String[] entries = config.getStunServers().split("[,;\\s]+");
+        final List<InetSocketAddress> stunServers = new ArrayList<>();
+        for (String entry : entries) {
+            if (entry == null || entry.isBlank()) {
+                continue;
+            }
+            try {
+                stunServers.add(parseStunAddress(entry.trim()));
+            } catch (Exception ignored) {
+                // 忽略格式错误的条目
+            }
+        }
+        // 把房间密钥派生为 8 字节打洞令牌（与对端独立计算得到同一份 token）
+        final byte[] token = derivePunchToken(config.getRoomSecret());
+        final PunchCoordinator coordinator =
+                new PunchCoordinator(token, stunServers, installId, displayName, config.getRoomCode(), signalling);
+        // PunchCoordinator 内部为每个 peer 维护自己的回调：这里只装一次，监听所有 peer 的上行字节
+        // 并把它们喂给上层 listener（等价于 WebRTC 数据通道的回调）。新 peer 在 onPeerReadyToNegotiate
+        // 里启动打洞时会自动绑定同一条 listener（构造函数内的回调对 coordinator 来说是 peerId 无关的）。
+        final PunchCoordinator.LinkListener universalListener =
+                (peerId, payload) ->
+                        listener.onPeerData(peerId, ByteBuffer.wrap(payload), true);
+        for (String peerId : new ArrayList<>(peers.keySet())) {
+            coordinator.setLinkListener(peerId, universalListener);
+        }
+        return coordinator;
+    }
+
+    /**
+     * 给一个对端装上"打洞通道收包"回调。P2PSession 在每条 peer 进入打洞流程时调用，确保收到的字节
+     * 能被同一个 listener.onPeerData 接收（与 WebRTC 数据通道共用）。
+     */
+    public void attachPunchListener(final String peerId) {
+        if (punchCoordinator == null) {
+            return;
+        }
+        punchCoordinator.setLinkListener(
+                peerId,
+                (id, payload) -> listener.onPeerData(id, ByteBuffer.wrap(payload), true));
+    }
+
+    private static InetSocketAddress parseStunAddress(final String entry) {
+        final String hostPort;
+        if (entry.contains("://")) {
+            hostPort = entry.substring(entry.indexOf("://") + 3);
+        } else {
+            hostPort = entry;
+        }
+        final int colon = hostPort.lastIndexOf(':');
+        if (colon < 0) {
+            return new InetSocketAddress(hostPort, 3478);
+        }
+        final String host = hostPort.substring(0, colon);
+        final int port = Integer.parseInt(hostPort.substring(colon + 1));
+        return new InetSocketAddress(host, port);
+    }
+
+    /**
+     * 把房间密钥派生为 8 字节打洞令牌：空房间用固定常量（无加密保护，但房间本身开放也不需要证明身份）；
+     * 有密钥时用 SHA-256 的前 8 字节。两端用同一个房间密钥自然派生同一份 token。
+     */
+    private static byte[] derivePunchToken(final String secret) {
+        if (secret == null || secret.isBlank()) {
+            // 开放房间的固定令牌：双方都能算出，但没有任何"持有房间密钥"的语义
+            return "mcp2p-open".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        }
+        try {
+            final byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            final byte[] token = new byte[8];
+            System.arraycopy(digest, 0, token, 0, 8);
+            return token;
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 
@@ -620,6 +735,9 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
         hostingPeers.remove(peerId);
         verifiedPeers.remove(peerId);
         challenges.remove(peerId);
+        if (punchCoordinator != null) {
+            punchCoordinator.drop(peerId);
+        }
         final PeerSession session = peers.remove(peerId);
         if (session == null) {
             return;
