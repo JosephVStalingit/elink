@@ -11,14 +11,19 @@ import dev.onvoid.webrtc.RTCDataChannelInit;
 import dev.onvoid.webrtc.RTCDataChannelObserver;
 import dev.onvoid.webrtc.RTCDataChannelState;
 import dev.onvoid.webrtc.RTCIceCandidate;
+import dev.onvoid.webrtc.RTCIceConnectionState;
 import dev.onvoid.webrtc.RTCOfferOptions;
 import dev.onvoid.webrtc.RTCPeerConnection;
+import dev.onvoid.webrtc.RTCPeerConnectionIceErrorEvent;
 import dev.onvoid.webrtc.RTCPeerConnectionState;
 import dev.onvoid.webrtc.RTCSessionDescription;
 import dev.onvoid.webrtc.SetSessionDescriptionObserver;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,18 +63,34 @@ public final class PeerSession implements AutoCloseable {
     private final RTCPeerConnection connection;
     private final List<RTCIceCandidate> pendingCandidates = new ArrayList<>();
 
+    /** 允许在打洞失败后自动重启 ICE 的次数（0 表示不重启）。 */
+    private final int maxIceRestarts;
+
+    /** 候选类型统计（host / srflx / prflx / relay），失败时用来判断"是不是需要 TURN"。 */
+    private final Map<String, Integer> localCandidateTypes = new ConcurrentHashMap<>();
+    private final Map<String, Integer> remoteCandidateTypes = new ConcurrentHashMap<>();
+
+    /** STUN/TURN 报错的次数（例如服务器不可达），同样用于诊断。 */
+    private final AtomicInteger iceErrors = new AtomicInteger();
+
     private RTCDataChannel dataChannel;
     private boolean remoteDescriptionSet;
-    private boolean closed;
+    /** 本端是不是发起方；只有发起方负责在失败时重启 ICE，避免双方同时重启。 */
+    private boolean initiator;
+    /** 已经重启过几次。 */
+    private int iceRestarts;
+    private volatile boolean closed;
 
     public PeerSession(
             final PeerConnectionFactory factory,
             final RTCConfiguration configuration,
             final String peerId,
             final String channelLabel,
+            final int maxIceRestarts,
             final Listener listener) {
         this.peerId = peerId;
         this.channelLabel = channelLabel;
+        this.maxIceRestarts = maxIceRestarts;
         this.listener = listener;
         this.connection = factory.createPeerConnection(configuration, new PeerObserver());
         LOGGER.debug("Created a peer connection for {}", peerId);
@@ -77,6 +98,7 @@ public final class PeerSession implements AutoCloseable {
 
     /** Opens the data channel and creates the offer; used by the peer that initiates. */
     public void startAsInitiator() {
+        initiator = true;
         final RTCDataChannelInit init = new RTCDataChannelInit();
         init.ordered = true;
         attachDataChannel(connection.createDataChannel(channelLabel, init));
@@ -102,6 +124,7 @@ public final class PeerSession implements AutoCloseable {
      * buffered, because WebRTC rejects them otherwise.
      */
     public void addRemoteCandidate(final RTCIceCandidate candidate) {
+        countCandidate(remoteCandidateTypes, candidate.sdp);
         synchronized (pendingCandidates) {
             if (!remoteDescriptionSet) {
                 pendingCandidates.add(candidate);
@@ -109,6 +132,72 @@ public final class PeerSession implements AutoCloseable {
             }
         }
         connection.addIceCandidate(candidate);
+    }
+
+    // ------------------------------------------------------------------
+    // 打洞失败时的自救与诊断（对称 NAT 场景的关键部分）
+    // ------------------------------------------------------------------
+
+    /**
+     * 打洞失败后重新收集候选并重发 offer。
+     *
+     * <p>对称 NAT 通常按固定顺序分配端口，重新收集一次有机会落到一条能通的路径上；在没配置 TURN 时，
+     * 这是唯一还能自动尝试的手段。只由发起方执行，避免双方同时重启互相打断。
+     *
+     * @return {@code true} 表示确实发起了一次重启；调用方据此决定要不要放弃这条连接
+     */
+    private boolean restartIceBecauseOfFailure() {
+        synchronized (this) {
+            // 已经连上、已经关闭、不是发起方、或者重启次数用完，都不再重启
+            if (closed || !initiator || isOpen() || iceRestarts >= maxIceRestarts) {
+                return false;
+            }
+            iceRestarts++;
+        }
+
+        reportIceTrouble();
+        LOGGER.warn("Restarting ICE for {} (attempt {}/{})", peerId, iceRestarts, maxIceRestarts);
+        connection.restartIce();
+
+        final RTCOfferOptions options = new RTCOfferOptions();
+        options.iceRestart = true; // 关键：让新的 offer 带上一组全新的 ICE 凭证
+        connection.createOffer(options, new CreateDescriptionObserver());
+        return true;
+    }
+
+    /** 连不上时输出足够的诊断信息，而不是只丢一句"失败"。 */
+    private void reportIceTrouble() {
+        LOGGER.warn(
+                "No working ICE path to {} yet: local candidates {}, remote candidates {}, STUN/TURN errors {}",
+                peerId,
+                localCandidateTypes,
+                remoteCandidateTypes,
+                iceErrors.get());
+
+        // 双方都没有中继候选时，最可能的原因就是"两侧都在对称 NAT 后面"
+        if (!localCandidateTypes.containsKey("relay") && !remoteCandidateTypes.containsKey("relay")) {
+            LOGGER.warn(
+                    "Neither side offers a relay candidate; if both peers sit behind a symmetric NAT, "
+                            + "configure TURN in config/mcp2p.properties (turn-servers, turn-username, turn-password)");
+        }
+    }
+
+    /** 从候选的 SDP 文本里取出类型：host / srflx / prflx / relay。 */
+    private static String candidateType(final String sdp) {
+        if (sdp == null) {
+            return "unknown";
+        }
+        final int index = sdp.indexOf(" typ ");
+        if (index < 0) {
+            return "unknown";
+        }
+        final String rest = sdp.substring(index + " typ ".length()).trim();
+        final int end = rest.indexOf(' ');
+        return end < 0 ? rest : rest.substring(0, end);
+    }
+
+    private static void countCandidate(final Map<String, Integer> into, final String sdp) {
+        into.merge(candidateType(sdp), 1, Integer::sum);
     }
 
     /**
@@ -242,6 +331,7 @@ public final class PeerSession implements AutoCloseable {
     private final class PeerObserver implements PeerConnectionObserver {
         @Override
         public void onIceCandidate(final RTCIceCandidate candidate) {
+            countCandidate(localCandidateTypes, candidate.sdp);
             listener.onLocalCandidate(candidate);
         }
 
@@ -251,11 +341,34 @@ public final class PeerSession implements AutoCloseable {
         }
 
         @Override
+        public void onIceConnectionChange(final RTCIceConnectionState state) {
+            LOGGER.debug("ICE of {} is {}", peerId, state);
+            if (state == RTCIceConnectionState.FAILED) {
+                // 先尝试自动重启：对称 NAT 下换一组映射可能就通了
+                restartIceBecauseOfFailure();
+            }
+        }
+
+        @Override
+        public void onIceCandidateError(final RTCPeerConnectionIceErrorEvent event) {
+            iceErrors.incrementAndGet();
+            LOGGER.warn(
+                    "STUN/TURN error for {}: {} {} (server {})",
+                    peerId,
+                    event.getErrorCode(),
+                    event.getErrorText(),
+                    event.getUrl());
+        }
+
+        @Override
         public void onConnectionChange(final RTCPeerConnectionState state) {
             LOGGER.info("Peer connection of {} is {}", peerId, state);
             listener.onConnectionStateChanged(state);
             if (state == RTCPeerConnectionState.FAILED) {
-                fail("the connection could not be established");
+                // 只有重启机会用尽（或本端不是发起方）才真正放弃这条连接
+                if (!restartIceBecauseOfFailure()) {
+                    fail("the connection could not be established");
+                }
             }
         }
     }

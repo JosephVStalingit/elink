@@ -8,9 +8,11 @@ import com.example.mcp2p.rtc.WebRtcEngine;
 import com.example.mcp2p.signalling.SignalMessage;
 import com.example.mcp2p.signalling.RoomSecret;
 import com.example.mcp2p.signalling.SignallingClient;
+import dev.onvoid.webrtc.PortAllocatorConfig;
 import dev.onvoid.webrtc.RTCConfiguration;
 import dev.onvoid.webrtc.RTCIceCandidate;
 import dev.onvoid.webrtc.RTCIceServer;
+import dev.onvoid.webrtc.RTCIceTransportPolicy;
 import dev.onvoid.webrtc.RTCPeerConnectionState;
 import dev.onvoid.webrtc.RTCSdpType;
 import dev.onvoid.webrtc.RTCSessionDescription;
@@ -244,14 +246,55 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
         client.publish(message);
     }
 
+    /**
+     * 构建 WebRTC 连接参数——这里是"打洞成功率"最集中的调节点。
+     *
+     * <p>各条措施对应的原理：
+     *
+     * <ul>
+     *   <li><b>每个 STUN 一个 ICE 服务器</b>：能拿到多少个反射地址，就有多少条路径可供对方的连接检查
+     *       尝试。当只有一侧处于对称 NAT 后面时（最常见的情况），靠的正是这一侧收集到的候选。
+     *   <li><b>TURN 带独立凭证</b>：配置后 ICE 会自动增加中继候选；双方都在对称 NAT 后面时，中继是唯一
+     *       可靠的通路。
+     *   <li><b>IPv6 默认开启</b>：只要双方都有公网 IPv6，流量直接走 IPv6，完全不经过 NAT。
+     *   <li><b>可选的本地端口范围</b>：把候选限制在一段固定端口区间，某些 NAT 会更稳定地复用同一映射。
+     *   <li><b>{@code relay} 策略</b>：强制只用 TURN，避免把双方 IP 暴露给对方。
+     * </ul>
+     */
     private RTCConfiguration rtcConfiguration() {
         final RTCConfiguration configuration = new RTCConfiguration();
-        final List<String> urls = config.iceServerUrls();
-        if (!urls.isEmpty()) {
+
+        // 1) STUN：每个 URI 一个 ICE 服务器
+        for (String url : config.iceServerUrls()) {
             final RTCIceServer server = new RTCIceServer();
-            server.urls.addAll(urls);
+            server.urls.add(url);
             configuration.iceServers.add(server);
         }
+
+        // 2) TURN：每个 URI 一个 ICE 服务器，并带上凭证
+        for (String url : config.turnServerUrls()) {
+            final RTCIceServer server = new RTCIceServer();
+            server.urls.add(url);
+            if (!config.getTurnUsername().isBlank()) {
+                server.username = config.getTurnUsername();
+                server.password = config.getTurnPassword();
+            }
+            configuration.iceServers.add(server);
+        }
+
+        // 3) 只走中继时，把主机候选与反射候选整体排除
+        if (config.forcesRelay()) {
+            configuration.iceTransportPolicy = RTCIceTransportPolicy.RELAY;
+        }
+
+        // 4) 候选端口范围（0 表示不限）与 IPv6 开关
+        final PortAllocatorConfig ports = configuration.portAllocatorConfig;
+        if (config.getIcePortMin() > 0 && config.getIcePortMax() >= config.getIcePortMin()) {
+            ports.minPort = config.getIcePortMin();
+            ports.maxPort = config.getIcePortMax();
+        }
+        ports.setEnableIpv6(config.isIpv6Enabled());
+
         return configuration;
     }
 
@@ -569,6 +612,7 @@ public final class P2PSession implements AutoCloseable, SignallingClient.Listene
                                 rtcConfiguration(),
                                 id,
                                 config.getDataChannelLabel(),
+                                config.getIceRestartAttempts(),
                                 peerListener(id)));
     }
 

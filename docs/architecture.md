@@ -116,6 +116,40 @@ Minecraft 说的是 TCP，而数据通道是面向消息的，因此在上面加
 connection 之前被丢弃。把证明绑定到房间、发送者与消息类型，意味着被截获的消息无法换个类型或换个发送者重放；
 被放进房间的对端则被视为可信。
 
+## 对称 NAT 与打洞成功率
+
+WebRTC 直连能否成功，取决于双方的 NAT 行为。**对称 NAT**（Symmetric NAT）的特点是：同一个内网端口访问
+不同目标时，NAT 会分配**不同**的公网端口，于是双方交换的"公网映射地址"对彼此都无效，普通打洞失败。
+
+### 已经做的优化（按代码位置）
+
+| 措施 | 位置 | 为什么有用 |
+| --- | --- | --- |
+| 每个 STUN 地址单独作为一个 ICE 服务器，可配置多个 | `P2PSession.rtcConfiguration` | 收集到的反射候选越多，对端能尝试的路径越多。当只有一侧是对称 NAT 时（最常见的真实情况），成功依赖的正是这一侧收集到的候选 |
+| IPv6 候选默认开启 | 同上（`PortAllocatorConfig.setEnableIpv6`） | 只要双方都有公网 IPv6，流量直接走 IPv6，完全不经过 NAT |
+| 本地候选端口范围可收窄 | 同上（`ice-port-min` / `ice-port-max`） | 把候选限制在一段固定区间，某些 NAT 会更稳定地复用同一个映射 |
+| 打洞失败自动重启 ICE，并重发带新凭证的 offer | `PeerSession.restartIceBecauseOfFailure` | 对称 NAT 常按顺序分配端口，重收集一次有机会落到能通的路径上；这是没有 TURN 时唯一还能自动尝试的手段。只由发起方执行，避免双方同时重启 |
+| 失败时输出候选类型统计与 STUN/TURN 错误码 | `PeerSession.reportIceTrouble` / `onIceCandidateError` | 把"连不上"变成可解释的问题：能直接看出是缺少 relay 候选，还是 STUN 服务器不可达 |
+| TURN 配置与凭证（含强制中继策略） | `McP2pConfig.turnServerUrls` / `ice-transport-policy` | 双方都在对称 NAT 后时，中继是唯一可靠的通路；`relay` 策略还能隐藏双方 IP |
+
+### 什么时候必须用 TURN
+
+| 双方 NAT 情况 | 直连可行吗 | 说明 |
+| --- | --- | --- |
+| 都不是对称 NAT（家里常见路由器） | 可以 | 靠 srflx 候选打洞 |
+| 一侧对称 NAT，另一侧不是 | 通常可以 | 非对称侧收集候选，对称侧主动发包；失败时会自动重启 ICE 再试 |
+| 双方都是对称 NAT | 基本不行 | 必须配置 TURN（本模组会把 TURN 作为 ICE 候选，自动在直连失败后使用） |
+| 双方都有公网 IPv6 | 可以 | 完全绕过 NAT，最稳 |
+
+TURN 配置示例（`config/mcp2p.properties`）：
+
+```properties
+turn-servers=turn:your.turn.server:3478
+turn-username=your-user
+turn-password=your-password
+ice-restart-attempts=2
+```
+
 ## 账号证明
 
 房间还可以要求对端拥有某个 LittleSkin 账号，这就是好友名单开启的能力。它使用的正是 Minecraft 自己认证玩家

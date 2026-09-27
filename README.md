@@ -106,7 +106,13 @@ Microsoft JDK 17），因此 `gradle.properties` 里的 `org.gradle.java.install
 | `client-token` | 空 | 与 access token 配套的 client token |
 | `friends` | 空 | 允许连接的账号（逗号分隔）；留空表示"持有房间密钥即可" |
 | `identity-cache-minutes` | `10` | 账号验证结果复用时长（分钟），`0` 表示不复用 |
-| `stun-servers` | 一个公共 STUN | 逗号、分号或空格分隔的 STUN / TURN 地址 |
+| `stun-servers` | 一个公共 STUN | 逗号、分号或空格分隔的 STUN 地址；多填几个能收集到更多反射候选 |
+| `turn-servers` | 空 | TURN 地址（`turn:` / `turns:`），对称 NAT 场景的兜底 |
+| `turn-username` / `turn-password` | 空 | TURN 凭证（同一组凭证用于 `turn-servers` 里的所有地址） |
+| `ice-transport-policy` | `all` | `all` = 直连优先、中继兜底；`relay` = 强制只走 TURN（不向对方暴露 IP） |
+| `ice-restart-attempts` | `2` | 打洞失败后自动重启 ICE 的次数，`0` 表示不重启 |
+| `ice-port-min` / `ice-port-max` | `0` / `0` | 本地候选端口范围；`0` 表示不限（收窄后某些 NAT 的映射更稳定） |
+| `enable-ipv6` | `true` | 允许收集 IPv6 候选；双方都有公网 IPv6 时完全绕开 NAT |
 | `data-channel` | `mcp2p` | 承载隧道的 WebRTC 数据通道标签 |
 | `local-port` | `0` | 加入方监听的本地端口；`0` 表示**自动选择空闲端口**（推荐，实际端口会广播给客户端），填具体值则固定 |
 | `forward-port` | `0` | 托管方要共享的游戏端口；`0` 表示使用"对局域网开放"生成的端口 |
@@ -217,7 +223,10 @@ forward-port=25565        # 换成你服务器的实际端口
 | 提示 `Could not reach the signalling broker` | 连不上 `broker`，换一个 MQTT 服务器（自建 Mosquitto / EMQX 均可） |
 | 日志出现 `Native WebRTC library is not available` | 当前平台缺少 WebRTC 原生库（目前只打包了 Windows x86-64） |
 | 多人游戏列表里没有条目 | 确认隧道处于"加入"状态（`/mcp2p status` 显示 Joining）；条目由本机广播生成，需在多人游戏界面稍等片刻 |
-| 双方都在线却连不上 | 双方必须使用同一个 `broker` 与同一个房间；对称 NAT 下需要 TURN，填进 `stun-servers` |
+| 双方都在线却连不上 | 双方必须使用同一个 `broker` 与同一个房间；日志里会打印候选类型统计，并按情况提示是否需要 TURN |
+| 日志提示"两侧都没有 relay 候选" | 双方很可能都在对称 NAT 后：配置 `turn-servers` / `turn-username` / `turn-password` |
+| 有 IPv6 却仍走 IPv4 | 确认 `enable-ipv6=true`（默认开启），并检查系统是否真的拿到了公网 IPv6 |
+| 想隐藏双方真实 IP | 把 `ice-transport-policy` 设为 `relay`，所有流量强制走 TURN |
 | 日志出现 `does not prove that it knows the room secret` | 房间密钥不一致，用最新的密钥重新 `join` |
 | 账号校验一直失败 | 密码或令牌过期：重新 `/mcp2p login`；或先 `/mcp2p friends clear` 关闭白名单 |
 | 想彻底重置 | 关闭游戏，删除 `config/mcp2p.properties`、`mcp2p-id.txt`、`mcp2p.key`、`mcp2p.secrets` |

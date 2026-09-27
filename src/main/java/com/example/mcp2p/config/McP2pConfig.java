@@ -45,6 +45,20 @@ public final class McP2pConfig {
     public static final int DEFAULT_CACHE_MINUTES = 10;
 
     /**
+     * Default ICE transport policy. {@code all} lets ICE use every kind of candidate (direct host
+     * addresses, server reflexive addresses discovered through STUN, and relays), {@code relay} forces
+     * everything through TURN — useful when the IP addresses must not be revealed to the peer.
+     */
+    public static final String DEFAULT_ICE_TRANSPORT_POLICY = "all";
+
+    /**
+     * How often ICE is restarted automatically when a connection cannot be established. A restart
+     * gathers fresh candidates, which occasionally succeeds behind a symmetric NAT because the NAT
+     * hands out a different mapping the next time.
+     */
+    public static final int DEFAULT_ICE_RESTART_ATTEMPTS = 2;
+
+    /**
      * LittleSkin's Yggdrasil endpoint. Every call is built by appending one of the documented paths,
      * for example {@code /authserver/refresh} or {@code /sessionserver/session/minecraft/hasJoined}.
      */
@@ -59,6 +73,14 @@ public final class McP2pConfig {
     private String topicPrefix = DEFAULT_TOPIC_PREFIX;
     private String roomCode = "";
     private String stunServers = DEFAULT_STUN_SERVERS;
+    private String turnServers = "";
+    private String turnUsername = "";
+    private String turnPassword = "";
+    private String iceTransportPolicy = DEFAULT_ICE_TRANSPORT_POLICY;
+    private int iceRestartAttempts = DEFAULT_ICE_RESTART_ATTEMPTS;
+    private int icePortMin;
+    private int icePortMax;
+    private boolean ipv6Enabled = true;
     private String dataChannelLabel = DEFAULT_DATA_CHANNEL_LABEL;
     private SecretStore secrets;
     private String roomSecret = "";
@@ -100,6 +122,20 @@ public final class McP2pConfig {
         config.topicPrefix = properties.getProperty("topic-prefix", config.topicPrefix).trim();
         config.roomCode = properties.getProperty("room", config.roomCode).trim();
         config.stunServers = properties.getProperty("stun-servers", config.stunServers).trim();
+        config.turnServers = properties.getProperty("turn-servers", config.turnServers).trim();
+        config.turnUsername = properties.getProperty("turn-username", config.turnUsername).trim();
+        config.turnPassword = properties.getProperty("turn-password", config.turnPassword).trim();
+        config.iceTransportPolicy =
+                properties.getProperty("ice-transport-policy", config.iceTransportPolicy).trim();
+        config.iceRestartAttempts =
+                readInt(properties, "ice-restart-attempts", config.iceRestartAttempts);
+        config.icePortMin = readInt(properties, "ice-port-min", config.icePortMin);
+        config.icePortMax = readInt(properties, "ice-port-max", config.icePortMax);
+        config.ipv6Enabled =
+                Boolean.parseBoolean(
+                        properties
+                                .getProperty("enable-ipv6", Boolean.toString(config.ipv6Enabled))
+                                .trim());
         config.dataChannelLabel =
                 properties.getProperty("data-channel", config.dataChannelLabel).trim();
         config.roomSecret = properties.getProperty("room-secret", config.roomSecret).trim();
@@ -130,6 +166,14 @@ public final class McP2pConfig {
         properties.setProperty("topic-prefix", topicPrefix);
         properties.setProperty("room", roomCode);
         properties.setProperty("stun-servers", stunServers);
+        properties.setProperty("turn-servers", turnServers);
+        properties.setProperty("turn-username", turnUsername);
+        properties.setProperty("turn-password", turnPassword);
+        properties.setProperty("ice-transport-policy", iceTransportPolicy);
+        properties.setProperty("ice-restart-attempts", Integer.toString(iceRestartAttempts));
+        properties.setProperty("ice-port-min", Integer.toString(icePortMin));
+        properties.setProperty("ice-port-max", Integer.toString(icePortMax));
+        properties.setProperty("enable-ipv6", Boolean.toString(ipv6Enabled));
         properties.setProperty("data-channel", dataChannelLabel);
         properties.setProperty("room-secret", roomSecret);
         properties.setProperty("littleskin-url", littleSkinUrl);
@@ -376,6 +420,95 @@ public final class McP2pConfig {
      */
     public int getCacheMinutes() {
         return cacheMinutes;
+    }
+
+    /** @return the TURN server URIs; split the same way as the STUN list */
+    public List<String> turnServerUrls() {
+        final List<String> urls = new ArrayList<>();
+        for (String url : turnServers.split("[,;\\s]+")) {
+            if (!url.isBlank()) {
+                urls.add(url.trim());
+            }
+        }
+        return urls;
+    }
+
+    /**
+     * @return {@code true} when relay candidates must be used, so that neither side learns the other's
+     *     IP address (everything goes through TURN)
+     */
+    public boolean forcesRelay() {
+        return "relay".equalsIgnoreCase(iceTransportPolicy);
+    }
+
+    /** @return {@code true} when ICE may gather IPv6 candidates, which avoids NAT altogether */
+    public boolean isIpv6Enabled() {
+        return ipv6Enabled;
+    }
+
+    public void setIpv6Enabled(final boolean ipv6Enabled) {
+        this.ipv6Enabled = ipv6Enabled;
+    }
+
+    /** @return the lower bound of the local candidate port range, {@code 0} meaning "any port" */
+    public int getIcePortMin() {
+        return icePortMin;
+    }
+
+    public void setIcePortMin(final int icePortMin) {
+        this.icePortMin = icePortMin;
+    }
+
+    /** @return the upper bound of the local candidate port range, {@code 0} meaning "any port" */
+    public int getIcePortMax() {
+        return icePortMax;
+    }
+
+    public void setIcePortMax(final int icePortMax) {
+        this.icePortMax = icePortMax;
+    }
+
+    /** @return how many automatic ICE restarts are allowed while a connection cannot be established */
+    public int getIceRestartAttempts() {
+        return iceRestartAttempts;
+    }
+
+    public void setIceRestartAttempts(final int iceRestartAttempts) {
+        this.iceRestartAttempts = iceRestartAttempts;
+    }
+
+    /** @return the ICE transport policy, either {@code all} or {@code relay} */
+    public String getIceTransportPolicy() {
+        return iceTransportPolicy;
+    }
+
+    public void setIceTransportPolicy(final String iceTransportPolicy) {
+        this.iceTransportPolicy = iceTransportPolicy;
+    }
+
+    /** @return the TURN URIs as written in the configuration file */
+    public String getTurnServers() {
+        return turnServers;
+    }
+
+    public void setTurnServers(final String turnServers) {
+        this.turnServers = turnServers == null ? "" : turnServers;
+    }
+
+    /** @return the TURN user name, empty when the servers need none */
+    public String getTurnUsername() {
+        return turnUsername;
+    }
+
+    /** @return the TURN password */
+    public String getTurnPassword() {
+        return turnPassword;
+    }
+
+    /** Stores the TURN credentials. */
+    public void setTurnCredentials(final String username, final String password) {
+        this.turnUsername = username == null ? "" : username;
+        this.turnPassword = password == null ? "" : password;
     }
 
     public void setCacheMinutes(final int cacheMinutes) {
