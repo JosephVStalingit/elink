@@ -47,14 +47,14 @@ Loom 的 `include` 配置一次性满足这两点。官方 Loom 参考文档写�
    `windows-x86_64`，其他平台按需追加）。
 2. 模组自己的 `fabric.mod.json` 里**不手写** `jars` 数组，交给 Loom 维护。
 3. 不使用 `shadowJar`/relocation。上游 JAR 原样放在我们的模组 JAR 内，玩家只需要把
-   `mcp2p-<mc>-<loader>-<version>.jar` 丢进 `mods/`。
+   `elink-<mc>-<loader>-<version>.jar` 丢进 `mods/`。
 
 Forge 与 NeoForge 侧不需要 `include`：Loom 的 jar-in-jar 机制同样打进了它们的产物（`META-INF/jars` 与
 `mods.toml` 一起工作）。
 
 ## 实测结果
 
-`./gradlew :1.20.1-fabric:buildAndCollect` 产出的 `build/libs/mcp2p-fabric-0.1.0-SNAPSHOT+mc1.20.1.jar`
+`./gradlew :1.20.1-fabric:buildAndCollect` 产出的 `build/libs/elink-fabric-0.1.0-SNAPSHOT+mc1.20.1.jar`
 （约 9.1 MB）内容如下：
 
 | 嵌套 JAR | 大小 | 说明 |
@@ -84,7 +84,7 @@ Forge 与 NeoForge 侧不需要 `include`：Loom 的 jar-in-jar 机制同样打�
 classpath 上，于是 `NativeLoader` 会去拷贝一个 `null` 流（`NativeLoader.java:64`）：
 
 ```
-[main/WARN] (mcp2p/rtc) Native WebRTC library is not available on this platform, P2P connections are disabled
+[main/WARN] (elink/rtc) Native WebRTC library is not available on this platform, P2P connections are disabled
     at dev.onvoid.webrtc.internal.NativeLoader.loadLibrary(NativeLoader.java:64)
 ```
 
@@ -98,7 +98,7 @@ add("runtimeOnly", "dev.onvoid.webrtc:webrtc-java:$webrtcVersion:$nativesClassif
 这样之后，开发服务器会打印：
 
 ```
-[16:14:52] [main/INFO] (mcp2p/rtc) Native WebRTC library loaded
+[16:14:52] [main/INFO] (elink/rtc) Native WebRTC library loaded
 ```
 
 ### 还需人工确认的部分

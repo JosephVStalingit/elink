@@ -1,4 +1,4 @@
-﻿# MC P2P
+# 易联
 
 > 一个让 Minecraft Java 版玩家**绕过中转服务器**直接互联的客户端模组。
 
@@ -6,7 +6,7 @@
 
 ## 项目简介
 
-MC P2P 是一个轻量级的 Minecraft Java 版客户端模组，目标是把“局域网联机”的能力带到互联网两端
+易联 是一个轻量级的 Minecraft Java 版客户端模组，目标是把“局域网联机”的能力带到互联网两端
 互相不可见的玩家之间。模组在**双方玩家的机器之间**直接建立 P2P 数据通道，让你的 Minecraft 客户端
 在多人游戏列表里就像看到朋友开了一个本地局域网一样可以直接加入。
 
@@ -42,7 +42,7 @@ MC P2P 是一个轻量级的 Minecraft Java 版客户端模组，目标是把“
 | 内网穿透（frp / zerotier） | 客户端 → 中转服务器 → 客户端 | 高（取决于中转） | 必须有一台公网中转 | 强 |
 | 公共 Minecraft 服务器 | 客户端 → 服务器 → 客户端 | 中 | 必须租用 | 强 |
 | 端口转发 | 客户端 → 路由器 → 客户端 | 低 | 双方都需要路由器权限 | 弱 |
-| **MC P2P** | **客户端 ↔ 客户端直连** | **最低** | **不需要**（只借 MQTT 信令） | **强**（含对称 NAT） |
+| **易联** | **客户端 ↔ 客户端直连** | **最低** | **不需要**（只借 MQTT 信令） | **强**（含对称 NAT） |
 
 ---
 
@@ -105,8 +105,8 @@ Microsoft JDK 17），因此 `gradle.properties` 里的 `org.gradle.java.install
 
 | 路径 | 用途 |
 | --- | --- |
-| `src/main/java/com/example/mcp2p` | 入口，以及 `command`（`/mcp2p` 命令）、`client`（LAN 端口）、`config`、`identity`（账号）、`signalling`、`rtc`、`net`、`tunnel`、`lan`、`platform`（加载器差异）、`punch`（UDP 打洞 + QUIC 风格管道） |
-| `src/main/resources` | 共享资源：`fabric.mod.json`、`META-INF/mods.toml`、`META-INF/neoforge.mods.toml`、`mcp2p.accesswidener` |
+| `src/main/java/com/example/elink` | 入口，以及 `command`（`/elink` 命令）、`client`（LAN 端口）、`config`、`identity`（账号）、`signalling`、`rtc`、`net`、`tunnel`、`lan`、`platform`（加载器差异）、`punch`（UDP 打洞 + QUIC 风格管道） |
+| `src/main/resources` | 共享资源：`fabric.mod.json`、`META-INF/mods.toml`、`META-INF/neoforge.mods.toml`、`elink.accesswidener` |
 | `versions/dependencies/*.properties` | 按 Minecraft 版本的依赖锁定（`loader_version`、`fabric_version`、`forge_version`、`neoforge_version`） |
 | `docs/` | 设计说明，例如 [依赖打包方式](docs/dependency-bundling.md)、[架构说明](docs/architecture.md)、[代码导读](docs/代码导读.md) |
 | `build.gradle.kts`、`settings.gradle.kts` | Stonecraft/Stonecutter 配置 |
@@ -163,7 +163,7 @@ P2P 通信的“持有房间密钥即证明身份”机制：
 - `META-INF/mods.toml`（Forge，以及 NeoForge 1.20.1）与 `META-INF/neoforge.mods.toml`（NeoForge 1.21.1）
   使用同一套变量替换；Forge 依赖的加载器版本取自 `forge_version`，NeoForge 1.21.1 取自
   `neoforge_version`。
-- `mcp2p.accesswidener` 目前没有任何条目；它的头部命名空间必须保持 `named`（Mojmap），否则 Loom 在
+- `elink.accesswidener` 目前没有任何条目；它的头部命名空间必须保持 `named`（Mojmap），否则 Loom 在
   setup 阶段会报 `Namespace mismatch, expected named got official`。
 - `runActiveServer` 需要先接受一次 EULA：创建内容为 `eula=true` 的 `run/eula.txt`（`run/` 是生成目录，
   已被 git 忽略）。
@@ -173,16 +173,16 @@ P2P 通信的“持有房间密钥即证明身份”机制：
 
 ## 配置文件
 
-配置位于 `config/mcp2p.properties`，首次启动时会自动写入默认值：
+配置位于 `config/elink.properties`，首次启动时会自动写入默认值：
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `broker` | `tcp://broker.emqx.io:1883` | 信令用的 MQTT 服务器；自建后改成自己的地址 |
-| `topic-prefix` | `mcp2p` | MQTT 主题前缀 |
-| `room` | 自动生成 | 分享给好友的房间码，例如 `MCP2P-7F3A9C` |
-| `room-secret` | 由 `/mcp2p host` 生成 | 协商前必须证明自己知道的房间密钥；留空表示房间开放 |
+| `topic-prefix` | `elink` | MQTT 主题前缀 |
+| `room` | 自动生成 | 分享给好友的房间码，例如 `ELINK-7F3A9C` |
+| `room-secret` | 由 `/elink host` 生成 | 协商前必须证明自己知道的房间密钥；留空表示房间开放 |
 | `littleskin-url` | `https://littleskin.cn/api/yggdrasil` | 账号服务地址，可换成其他 LittleSkin 兼容服务 |
-| `access-token` | 空 | 账号令牌，由 `/mcp2p login` 写入；加密保存，配置文件里只留空值 |
+| `access-token` | 空 | 账号令牌，由 `/elink login` 写入；加密保存，配置文件里只留空值 |
 | `client-token` | 空 | 与 access token 配套的 client token |
 | `friends` | 空 | 允许连接的账号（逗号分隔）；留空表示“持有房间密钥即可” |
 | `identity-cache-minutes` | `10` | 账号验证结果复用时长（分钟），`0` 表示不复用 |
@@ -193,12 +193,12 @@ P2P 通信的“持有房间密钥即证明身份”机制：
 | `ice-restart-attempts` | `2` | 打洞失败后自动重启 ICE 的次数，`0` 表示不重启 |
 | `ice-port-min` / `ice-port-max` | `0` / `0` | 本地候选端口范围；`0` 表示不限（收窄后某些 NAT 的映射更稳定） |
 | `enable-ipv6` | `true` | 允许收集 IPv6 候选；双方都有公网 IPv6 时完全绕开 NAT |
-| `data-channel` | `mcp2p` | 承载隧道的 WebRTC 数据通道标签 |
+| `data-channel` | `elink` | 承载隧道的 WebRTC 数据通道标签 |
 | `local-port` | `0` | 加入方监听的本地端口；`0` 表示**自动选择空闲端口**（推荐，实际端口会广播给客户端），填具体值则固定 |
 | `forward-port` | `0` | 托管方要共享的游戏端口；`0` 表示使用“对局域网开放”生成的端口 |
 | `auto-join` | `false` | 启动即加入房间，并按 `forward-port` 自动扮演托管或加入 |
 
-令牌不会以明文写入配置文件：它们保存在 `config/mcp2p.secrets`，密钥在 `config/mcp2p.key`（Windows 上用
+令牌不会以明文写入配置文件：它们保存在 `config/elink.secrets`，密钥在 `config/elink.key`（Windows 上用
 DPAPI 绑定当前账户；其他平台为本地密钥文件）。旧版本遗留在配置文件里的明文令牌会在启动时自动迁移。
 
 ### 默认 STUN 服务器列表
@@ -223,10 +223,10 @@ stun2.l.google.com:19302       stun3.l.google.com:19302     stun4.l.google.com:1
 
 | 平台 | 文件名 | 备注 |
 | --- | --- | --- |
-| 1.20.1 Fabric | `mcp2p-fabric-0.1.0-SNAPSHOT+mc1.20.1.jar` | Fabric Loader 0.14+ |
-| 1.21.1 Fabric | `mcp2p-fabric-0.1.0-SNAPSHOT+mc1.21.1.jar` | Fabric Loader 0.16+ |
-| 1.20.1 Forge | `mcp2p-forge-0.1.0-SNAPSHOT+mc1.20.1.jar` | Forge 47.4 及以上 |
-| 1.21.1 Forge | `mcp2p-forge-0.1.0-SNAPSHOT+mc1.21.1.jar` | Forge 52.1 及以上 |
+| 1.20.1 Fabric | `elink-fabric-0.1.0-SNAPSHOT+mc1.20.1.jar` | Fabric Loader 0.14+ |
+| 1.21.1 Fabric | `elink-fabric-0.1.0-SNAPSHOT+mc1.21.1.jar` | Fabric Loader 0.16+ |
+| 1.20.1 Forge | `elink-forge-0.1.0-SNAPSHOT+mc1.20.1.jar` | Forge 47.4 及以上 |
+| 1.21.1 Forge | `elink-forge-0.1.0-SNAPSHOT+mc1.21.1.jar` | Forge 52.1 及以上 |
 
 ### 2. 第一次启动
 
@@ -234,9 +234,9 @@ stun2.l.google.com:19302       stun3.l.google.com:19302     stun4.l.google.com:1
 
 | 文件 | 内容 |
 | --- | --- |
-| `config/mcp2p.properties` | 全部设置，可随时编辑（改完重启游戏生效） |
-| `config/mcp2p-id.txt` | 本安装的固定 ID，用来在对端之间区分你 |
-| `config/mcp2p.key` + `config/mcp2p.secrets` | 账号令牌的加密存储（Windows 上主密钥由 DPAPI 绑定当前账户） |
+| `config/elink.properties` | 全部设置，可随时编辑（改完重启游戏生效） |
+| `config/elink-id.txt` | 本安装的固定 ID，用来在对端之间区分你 |
+| `config/elink.key` + `config/elink.secrets` | 账号令牌的加密存储（Windows 上主密钥由 DPAPI 绑定当前账户） |
 
 日志里应出现 `The native WebRTC library is ready`，看到它就说明 WebRTC 可以用了；若看到
 `WebRTC is unavailable on this platform`，说明当前平台缺少原生库（目前只打包了 Windows x86-64）。
@@ -247,14 +247,14 @@ stun2.l.google.com:19302       stun3.l.google.com:19302     stun4.l.google.com:1
 2. 在聊天栏执行：
 
 ```
-/mcp2p host
+/elink host
 ```
 
 3. 聊天栏会给出房间码与房间密钥，形如：
 
 ```
 Sharing the world on 127.0.0.1:54123
-Friends join with /mcp2p join MCP2P-7F3A9C 5f2c1d8e9a4b6c3d1e0f7a8b9c0d1e2f
+Friends join with /elink join ELINK-7F3A9C 5f2c1d8e9a4b6c3d1e0f7a8b9c0d1e2f
 ```
 
 4. 把最后那一整条 `join` 命令私下发给好友即可。
@@ -264,45 +264,45 @@ Friends join with /mcp2p join MCP2P-7F3A9C 5f2c1d8e9a4b6c3d1e0f7a8b9c0d1e2f
 在聊天栏执行房主给你的那条命令（房间没有密钥时可以只写房间码）：
 
 ```
-/mcp2p join MCP2P-7F3A9C 5f2c1d8e9a4b6c3d1e0f7a8b9c0d1e2f
+/elink join ELINK-7F3A9C 5f2c1d8e9a4b6c3d1e0f7a8b9c0d1e2f
 ```
 
-然后打开 **多人游戏**：列表里会自动出现一条 `MC P2P MCP2P-7F3A9C - <房主名>`，点它加入即可。本地监听的
-端口由系统自动分配，不需要手动输入；`/mcp2p status` 会显示实际端口，需要手动直连时用它。
+然后打开 **多人游戏**：列表里会自动出现一条 `易联 ELINK-7F3A9C - <房主名>`，点它加入即可。本地监听的
+端口由系统自动分配，不需要手动输入；`/elink status` 会显示实际端口，需要手动直连时用它。
 
 ### 5. 命令速查
 
 | 命令 | 作用 |
 | --- | --- |
-| `/mcp2p` 或 `/mcp2p status` | 查看房间、角色、隧道连接数、账号与密钥状态 |
-| `/mcp2p host` | 共享当前“对局域网开放”的世界（首次会生成房间密钥） |
-| `/mcp2p join <房间码> [密钥]` | 加入房间并开始本地监听 |
-| `/mcp2p leave` | 离开房间、关闭隧道、撤回服务器列表条目 |
-| `/mcp2p login <邮箱> <密码>` | 用 LittleSkin 账号登录（令牌写入加密存储）；邮箱与密码可含 `@` `.` `+` `-` 等特殊字符 |
-| `/mcp2p whoami` | 查看当前登录的账号 |
-| `/mcp2p friends` | 查看好友名单 |
-| `/mcp2p friends <名字或UUID…>` | 只允许这些账号连接（同时开启账号校验） |
-| `/mcp2p friends clear` | 清空好友名单，回到“有房间密钥即可” |
+| `/elink` 或 `/elink status` | 查看房间、角色、隧道连接数、账号与密钥状态 |
+| `/elink host` | 共享当前“对局域网开放”的世界（首次会生成房间密钥） |
+| `/elink join <房间码> [密钥]` | 加入房间并开始本地监听 |
+| `/elink leave` | 离开房间、关闭隧道、撤回服务器列表条目 |
+| `/elink login <邮箱> <密码>` | 用 LittleSkin 账号登录（令牌写入加密存储）；邮箱与密码可含 `@` `.` `+` `-` 等特殊字符 |
+| `/elink whoami` | 查看当前登录的账号 |
+| `/elink friends` | 查看好友名单 |
+| `/elink friends <名字或UUID…>` | 只允许这些账号连接（同时开启账号校验） |
+| `/elink friends clear` | 清空好友名单，回到“有房间密钥即可” |
 
 ### 6. 专用服务器
 
-服务器上同样放 jar，然后编辑 `config/mcp2p.properties`：
+服务器上同样放 jar，然后编辑 `config/elink.properties`：
 
 ```properties
 auto-join=true
 forward-port=25565        # 换成你服务器的实际端口
 ```
 
-这样开服即自动加入房间并共享该端口，房间码与密钥可在日志里看到，也可以用 `/mcp2p status` 查询。
+这样开服即自动加入房间并共享该端口，房间码与密钥可在日志里看到，也可以用 `/elink status` 查询。
 
 ### 7. 限制谁能进来
 
 房间有两道防线。
 
-- **房间密钥**（默认开启）：`/mcp2p host` 首次生成，之后每条信令都携带
+- **房间密钥**（默认开启）：`/elink host` 首次生成，之后每条信令都携带
   `HMAC-SHA256(secret, room|sender|type)` 证明，没有证明的消息在任何 WebRTC 动作之前就被丢弃。它是“持有即可
   用”的凭据，请私下传递。
-- **账号白名单**（可选）：先 `/mcp2p login <邮箱> <密码>`，再 `/mcp2p friends Alice Bob 069a79f4-…`。此后房主
+- **账号白名单**（可选）：先 `/elink login <邮箱> <密码>`，再 `/elink friends Alice Bob 069a79f4-…`。此后房主
   要求每位来客证明自己拥有该账号：来客用随机 id 向 LittleSkin 声明正在加入
   （`session/minecraft/join`），房主再问 LittleSkin 该账号是否真的用这个 id 加入了（`hasJoined`）。只有账号
   持有者能完成第一步（它需要令牌），证明通过前房主完全忽略对方。
@@ -311,22 +311,22 @@ forward-port=25565        # 换成你服务器的实际端口
 
 | 现象 | 处理 |
 | --- | --- |
-| `/mcp2p host` 提示 `Open this world to LAN first` | 还没有“对局域网开放”；专用服务器上请设置 `forward-port` |
+| `/elink host` 提示 `Open this world to LAN first` | 还没有“对局域网开放”；专用服务器上请设置 `forward-port` |
 | 提示 `Could not reach the signalling broker` | 连不上 `broker`，换一个 MQTT 服务器（自建 Mosquitto / EMQX 均可） |
 | 日志出现 `Native WebRTC library is not available` | 当前平台缺少 WebRTC 原生库（目前只打包了 Windows x86-64） |
-| 多人游戏列表里没有条目 | 确认隧道处于“加入”状态（`/mcp2p status` 显示 Joining）；条目由本机广播生成，需在多人游戏界面稍等片刻 |
+| 多人游戏列表里没有条目 | 确认隧道处于“加入”状态（`/elink status` 显示 Joining）；条目由本机广播生成，需在多人游戏界面稍等片刻 |
 | 双方都在线却连不上 | 双方必须使用同一个 `broker` 与同一个房间；日志里会打印候选类型统计，并按情况提示是否需要 TURN |
 | 日志提示“两侧都没有 relay 候选” | 双方很可能都在对称 NAT 后：配置 `turn-servers` / `turn-username` / `turn-password`；或保留默认的 9 个 STUN，让模组先尝试打洞通道 |
-| 日志看到 `[punch <peerId>] gave up` | 在这次会话内未能命中；可以重新 `/mcp2p leave` + `/mcp2p join` 让打洞重跑 |
+| 日志看到 `[punch <peerId>] gave up` | 在这次会话内未能命中；可以重新 `/elink leave` + `/elink join` 让打洞重跑 |
 | 有 IPv6 却仍走 IPv4 | 确认 `enable-ipv6=true`（默认开启），并检查系统是否真的拿到了公网 IPv6 |
 | 想隐藏双方真实 IP | 把 `ice-transport-policy` 设为 `relay`，所有流量强制走 TURN |
 | 日志出现 `does not prove that it knows the room secret` | 房间密钥不一致，用最新的密钥重新 `join` |
-| 账号校验一直失败 | 密码或令牌过期：重新 `/mcp2p login`；或先 `/mcp2p friends clear` 关闭白名单 |
-| 想彻底重置 | 关闭游戏，删除 `config/mcp2p.properties`、`mcp2p-id.txt`、`mcp2p.key`、`mcp2p.secrets` |
+| 账号校验一直失败 | 密码或令牌过期：重新 `/elink login`；或先 `/elink friends clear` 关闭白名单 |
+| 想彻底重置 | 关闭游戏，删除 `config/elink.properties`、`elink-id.txt`、`elink.key`、`elink.secrets` |
 
 ### 9. 隐私提示
 
-- `config/mcp2p.key` 与 `config/mcp2p.secrets` 保存着你的账号令牌（Windows 上由 DPAPI 绑定当前账户），不要
+- `config/elink.key` 与 `config/elink.secrets` 保存着你的账号令牌（Windows 上由 DPAPI 绑定当前账户），不要
   发给别人，也不要把整个 `config` 目录打包分享；
 - 房间密钥同样是“持有即可进入”的凭据，请私下传递；
 - broker 上可见房间主题与信令内容（SDP、ICE、名字），看不到游戏数据 —— 游戏数据全部走 WebRTC

@@ -9,7 +9,7 @@
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
-    "main": ["${group}.${id}.McP2p"]
+    "main": ["${group}.${id}.ELink"]
   },
   "depends": {
     "fabricloader": ">=0.16.14",

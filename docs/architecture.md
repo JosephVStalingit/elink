@@ -13,16 +13,16 @@ Minecraft 世界  ->  P2P 桥接  ->  WebRTC 数据通道  ->  对端 P2P 桥接
 
 | 层 | 包 | 职责 |
 | --- | --- | --- |
-| 命令 | `com.example.mcp2p.command` | `/mcp2p host`、`join`、`status`、`leave` |
-| 客户端桥接 | `com.example.mcp2p.client` | 读取集成服务器的"对局域网开放"端口 |
-| 服务器列表桥接 | `com.example.mcp2p.lan` | 把隧道伪装成局域网世界，使其出现在多人游戏列表里 |
-| 局域网桥接 | `com.example.mcp2p.tunnel` | 在一条数据通道上复用 TCP 连接：托管方拨号游戏端口，加入方本地监听 |
-| 会话编排 | `com.example.mcp2p.net` | 加入房间、决定发起方、把信令接到 peer connection、对外提供可靠字节通道 |
-| 信令 | `com.example.mcp2p.signalling` | MQTT 传输、房间主题、消息编解码、房间密钥证明 |
-| WebRTC | `com.example.mcp2p.rtc` | peer connection 生命周期、数据通道、ICE/连接状态 |
-| 账号 | `com.example.mcp2p.identity` | 账号服务调用：登录、刷新、证明账号、校验证明、结果缓存 |
-| 平台差异 | `com.example.mcp2p.platform` | 加载器差异：配置目录、模组版本、是否客户端、命令注册时机 |
-| 配置 | `com.example.mcp2p.config` | broker 地址、房间、端口、ICE 服务器、安装 ID、加密存储 |
+| 命令 | `com.example.elink.command` | `/elink host`、`join`、`status`、`leave` |
+| 客户端桥接 | `com.example.elink.client` | 读取集成服务器的"对局域网开放"端口 |
+| 服务器列表桥接 | `com.example.elink.lan` | 把隧道伪装成局域网世界，使其出现在多人游戏列表里 |
+| 局域网桥接 | `com.example.elink.tunnel` | 在一条数据通道上复用 TCP 连接：托管方拨号游戏端口，加入方本地监听 |
+| 会话编排 | `com.example.elink.net` | 加入房间、决定发起方、把信令接到 peer connection、对外提供可靠字节通道 |
+| 信令 | `com.example.elink.signalling` | MQTT 传输、房间主题、消息编解码、房间密钥证明 |
+| WebRTC | `com.example.elink.rtc` | peer connection 生命周期、数据通道、ICE/连接状态 |
+| 账号 | `com.example.elink.identity` | 账号服务调用：登录、刷新、证明账号、校验证明、结果缓存 |
+| 平台差异 | `com.example.elink.platform` | 加载器差异：配置目录、模组版本、是否客户端、命令注册时机 |
+| 配置 | `com.example.elink.config` | broker 地址、房间、端口、ICE 服务器、安装 ID、加密存储 |
 
 P2P 链路上没有任何 Minecraft API，都是普通 Java，因此同一份代码在客户端和专用服务器上都能跑，也便于在游
 戏之外测试。
@@ -33,14 +33,14 @@ MQTT 只负责"碰头"：数据通道一旦建立，就再也不用了（ICE 重
 
 ### 主题
 
-一个房间由一个便于分享的短码标识，例如 `MCP2P-7F3A9C`。所有主题都在可配置的前缀下（默认 `mcp2p`）：
+一个房间由一个便于分享的短码标识，例如 `ELINK-7F3A9C`。所有主题都在可配置的前缀下（默认 `elink`）：
 
 | 主题 | 方向 | 用途 |
 | --- | --- | --- |
 | `<前缀>/<房间>` | 广播 | offer / answer / ICE candidate，用 `from`/`to` 字段寻址 |
 | `<前缀>/<房间>/presence` | 广播 | 加入与离开通知，以及周期性心跳 |
 
-发布者的 MQTT client ID 是"每个安装固定"的标识（`mcp2p-<installId>`），所以重启后不会被当成新玩家。
+发布者的 MQTT client ID 是"每个安装固定"的标识（`elink-<installId>`），所以重启后不会被当成新玩家。
 
 ### 消息
 
@@ -70,7 +70,7 @@ offer。除 `hello` 外，每条消息都带协议 `version` 与房间；`to` �
 
 * 每个进程一个 `PeerConnectionFactory`，首次使用时惰性创建。
 * 每个 peer 一个 `RTCPeerConnection`，由 `RTCConfiguration` 构建（STUN/TURN 来自配置）。
-* 隧道跑在 SCTP 数据通道上：目前是一条可靠、有序的通道（`mcp2p`）；将来若某条"车道"需要无序/不可靠，
+* 隧道跑在 SCTP 数据通道上：目前是一条可靠、有序的通道（`elink`）；将来若某条"车道"需要无序/不可靠，
   再加通道即可。
 * ICE candidate 一产生就通过 MQTT 投递（`onIceCandidate`）；由于房间主题是广播，远端描述尚未设置时到达的
   candidate 必须由接收方缓存后再喂给 WebRTC。
@@ -130,7 +130,7 @@ WebRTC 直连能否成功，取决于双方的 NAT 行为。**对称 NAT**（Sym
 | 本地候选端口范围可收窄 | 同上（`ice-port-min` / `ice-port-max`） | 把候选限制在一段固定区间，某些 NAT 会更稳定地复用同一个映射 |
 | 打洞失败自动重启 ICE，并重发带新凭证的 offer | `PeerSession.restartIceBecauseOfFailure` | 对称 NAT 常按顺序分配端口，重收集一次有机会落到能通的路径上；这是没有 TURN 时唯一还能自动尝试的手段。只由发起方执行，避免双方同时重启 |
 | 失败时输出候选类型统计与 STUN/TURN 错误码 | `PeerSession.reportIceTrouble` / `onIceCandidateError` | 把"连不上"变成可解释的问题：能直接看出是缺少 relay 候选，还是 STUN 服务器不可达 |
-| TURN 配置与凭证（含强制中继策略） | `McP2pConfig.turnServerUrls` / `ice-transport-policy` | 双方都在对称 NAT 后时，中继是唯一可靠的通路；`relay` 策略还能隐藏双方 IP |
+| TURN 配置与凭证（含强制中继策略） | `ELinkConfig.turnServerUrls` / `ice-transport-policy` | 双方都在对称 NAT 后时，中继是唯一可靠的通路；`relay` 策略还能隐藏双方 IP |
 
 ### 什么时候必须用 TURN
 
@@ -141,7 +141,7 @@ WebRTC 直连能否成功，取决于双方的 NAT 行为。**对称 NAT**（Sym
 | 双方都是对称 NAT | 基本不行 | 必须配置 TURN（本模组会把 TURN 作为 ICE 候选，自动在直连失败后使用） |
 | 双方都有公网 IPv6 | 可以 | 完全绕过 NAT，最稳 |
 
-TURN 配置示例（`config/mcp2p.properties`）：
+TURN 配置示例（`config/elink.properties`）：
 
 ```properties
 turn-servers=turn:your.turn.server:3478
@@ -173,17 +173,17 @@ Yggdrasil 的 `agent` 对象 —— 第一次没带时返回 `400 agent must be 
 
 | 组件 | 状态 |
 | --- | --- |
-| `config.McP2pConfig`、`config.InstallId`、`config.SecretStore` | 完成：配置文件、默认值、房间码、端口、固定安装 ID、令牌加密存储 |
+| `config.ELinkConfig`、`config.InstallId`、`config.SecretStore` | 完成：配置文件、默认值、房间码、端口、固定安装 ID、令牌加密存储 |
 | `signalling.SignalMessage`、`signalling.RoomSecret`、`signalling.SignallingClient` | 完成：JSON 协议、HMAC 房间证明、Paho 传输、房间订阅与自动重连 |
 | `rtc.WebRtcEngine`、`rtc.PeerSession` | 完成：原生库探测、共享工厂、offer/answer、ICE 透传与缓存、数据通道 |
 | `net.P2PSession` | 完成：加入房间、发起方选举、托管声明、peer 注册表、账号证明状态机、背压查询 |
 | `tunnel.TunnelFrame`、`tunnel.TunnelStream`、`tunnel.TunnelMultiplexer`、`tunnel.TunnelSession` | 完成：帧协议、按 peer 复用、流线程、托管与加入两种角色 |
 | `identity.LittleSkinClient`、`identity.IdentityService`、`identity.PlayerIdentity`、`identity.ResultCache` | 完成：登录、刷新、join、hasJoined、名称查询、令牌存储、验证结果缓存 |
-| `command.McP2pCommand` | 完成：`/mcp2p host`、`join`、`status`、`leave`、`login`、`whoami`、`friends` |
-| `client.McP2pClient` | 完成：把"对局域网开放"的端口交给通用代码 |
+| `command.ELinkCommand` | 完成：`/elink host`、`join`、`status`、`leave`、`login`、`whoami`、`friends` |
+| `client.ELinkClient` | 完成：把"对局域网开放"的端口交给通用代码 |
 | `lan.LanAnnouncer` | 完成：把隧道广播成局域网世界，出现在多人游戏列表里 |
 | `platform.Platform` | 完成：Fabric / Forge / NeoForge 的差异集中在此 |
-| `McP2p` | 完成：整体装配、服务端的自动加入与自动角色 |
+| `ELink` | 完成：整体装配、服务端的自动加入与自动角色 |
 
 已验证：开发环境下原生库能加载、broker 能连接、隧道能打开本地端口并接受真实 TCP 连接（无人托管时会给出明
 确日志并拒绝）。广播器用真实类对着"按客户端方式绑定"的 socket 跑过，从 `127.0.0.1` 发出

@@ -44,4 +44,4 @@ stonecutter {
     create(rootProject)
 }
 
-rootProject.name = "mcp2p"
+rootProject.name = "elink"
