@@ -1,6 +1,9 @@
 package com.example.elink.client;
 
 import com.example.elink.ELink;
+import com.example.elink.platform.Platform;
+import com.example.elink.ui.ELinkTitleScreen;
+import com.example.elink.ui.TitleOverlay;
 import net.minecraft.client.Minecraft;
 
 /**
@@ -16,6 +19,10 @@ public final class ELinkClient {
     /** Hands the port of the shared world over to the common code. */
     public static void install() {
         ELink.setLanPortProvider(ELinkClient::lanPort);
+        // Register the title-screen button on every supported loader (Fabric / Forge).
+        TitleOverlay.register();
+        // Wire up the UI opener so /elink ui can be invoked from the chat on the client.
+        Platform.setUiOpener(() -> Minecraft.getInstance().execute(ELinkTitleScreen::open));
     }
 
     /** @return the integrated server's port, or {@code -1} while no world is shared */

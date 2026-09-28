@@ -106,13 +106,36 @@ public final class Platform {
         *//*?}*/
     }
 
+    /**
+     * Opens the client UI. Implemented in the client-only classloader (see {@code ELinkClient}) so
+     * the common code does not need a direct dependency on the screen.
+     *
+     * <p>The handler is a {@link Runnable} because the work has to run on the client thread; the
+     * command dispatcher invokes us from the server thread.
+     */
+    private static volatile Runnable uiOpener = () -> {};
+
+    /** Called by the client-only bootstrap to plug in the real implementation. */
+    public static void setUiOpener(final Runnable opener) {
+        uiOpener = opener == null ? () -> {} : opener;
+    }
+
+    /** Asks the client to open the UI. No-op on a dedicated server. */
+    public static void openUi() {
+        uiOpener.run();
+    }
+
     /** Logs which platform the mod is running on, for support requests. */
     public static void logDetails() {
         LOGGER.info("Running on {} with the mod at {}", platformName(), Platform.class.getProtectionDomain()
                 .getCodeSource() == null ? "unknown" : "a mod jar");
     }
 
-    private static String platformName() {
+    /**
+     * @return the human-readable loader name. Public so the UI can show it without duplicating the
+     *         Stonecutter branches.
+     */
+    public static String platformName() {
         /*? if fabric {*/
         return "Fabric";
         /*?}*/

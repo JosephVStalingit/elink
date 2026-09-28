@@ -93,7 +93,25 @@ public final class ELinkCommand {
                                                                         friends(
                                                                                 context.getSource(),
                                                                                 StringArgumentType.getString(
-                                                                                        context, "list"))))));
+                                                                                        context, "list")))))
+                        .then(
+                                // Client-only convenience: open the ELink UI without going through
+                                // the title-screen button. The handler delegates to the
+                                // client-only bootstrap, so the common code does not need a direct
+                                // dependency on the screen class.
+                                Commands.literal("ui")
+                                        .executes(context -> openUi(context.getSource()))));
+    }
+
+    private static int openUi(final CommandSourceStack source) {
+        if (!Platform.isClient()) {
+            reply(source, "The ELink UI is only available on the client");
+            return Command.SINGLE_SUCCESS;
+        }
+        // Defer to the client thread; commands can fire from the server thread too (e.g. when a
+        // command block triggers them), and touching the screen state directly from there crashes.
+        Platform.openUi();
+        return Command.SINGLE_SUCCESS;
     }
 
     private static int host(final CommandSourceStack source) {
